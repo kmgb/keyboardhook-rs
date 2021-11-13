@@ -1,41 +1,42 @@
 use winapi::shared::windef::HHOOK;
 use winapi::shared::minwindef::{WPARAM, LPARAM, LRESULT, UINT};
-use winapi::um::winuser;
+use winapi::um::winuser::{self, LLKHF_INJECTED, LLKHF_LOWER_IL_INJECTED};
 use winapi::ctypes::c_int;
 
 use std::convert::TryFrom;
 
 pub fn run_hook() {
     std::thread::spawn(|| {
-        let hook = setup_hook();
+        let _hook = WindowsHook::new(winuser::WH_KEYBOARD_LL, Some(callback));
         message_loop();
-        remove_hook(hook);
     });
 }
 
-fn setup_hook() -> HHOOK {
-    unsafe {
-        let hook = winuser::SetWindowsHookExA(winuser::WH_KEYBOARD_LL, Some(callback), std::ptr::null_mut(), 0);
+struct WindowsHook {
+    hook: HHOOK,
+}
 
+impl WindowsHook {
+    fn new(id: c_int, callback: winuser::HOOKPROC) -> WindowsHook {
+        let hook;
+        unsafe {
+            hook = winuser::SetWindowsHookExA(id, callback, std::ptr::null_mut(), 0);
+        }
         if hook.is_null() {
-            panic!("Windows hook null return");
+            unsafe {
+                panic!("WindowsHook initialization failed: GetLastError={}", winapi::um::errhandlingapi::GetLastError());
+            }
         }
 
-        println!("Successfully hooked keyboard");
-
-        hook
+        WindowsHook { hook }
     }
 }
 
-fn remove_hook(hook: HHOOK) {
-    unsafe {
-        let result = winuser::UnhookWindowsHookEx(hook);
-
-        if result == 0 {
-            panic!("Windows unhook non-zero return");
+impl Drop for WindowsHook {
+    fn drop(&mut self) {
+        unsafe {
+            winuser::UnhookWindowsHookEx(self.hook);
         }
-
-        println!("Successfully unhooked keyboard");
     }
 }
 
@@ -58,13 +59,13 @@ unsafe extern "system" fn callback(code: c_int, w_param: WPARAM, l_param: LPARAM
             winuser::WM_KEYDOWN
             | winuser::WM_SYSKEYDOWN => {
                 let info: winuser::PKBDLLHOOKSTRUCT = std::mem::transmute(l_param);
-                println!("Keydown: {}", (*info).vkCode);
+                println!("Keydown: {} {} {}", (*info).vkCode, if (*info).flags & LLKHF_INJECTED != 0 { "INJECTED" } else { "." }, if (*info).flags & LLKHF_LOWER_IL_INJECTED != 0 { "LOWER INJECTED" } else { "." });
             },
 
             winuser::WM_KEYUP
             | winuser::WM_SYSKEYUP => {
                 let info: winuser::PKBDLLHOOKSTRUCT = std::mem::transmute(l_param);
-                println!("Keyup: {}", (*info).vkCode);
+                println!("Keyup: {} {} {}", (*info).vkCode, if (*info).flags & LLKHF_INJECTED != 0 { "INJECTED" } else { "." }, if (*info).flags & LLKHF_LOWER_IL_INJECTED != 0 { "LOWER INJECTED" } else { "." });
             },
 
             _ => (),
